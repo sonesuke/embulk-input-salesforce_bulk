@@ -59,7 +59,7 @@ in:
   - {type: timestamp, name: LastModifiedDate, format: '%FT%T.%L%Z'}
 ```
 
-### SObjectの伊fールドをすべて抽出
+### SObjectのフィールドをすべて抽出
 
 ```yaml
 in:
