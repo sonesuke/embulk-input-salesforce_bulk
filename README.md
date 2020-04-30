@@ -18,10 +18,10 @@ Salesforce Bulk API の一括クエリ結果を取得します。
 - **objectType**: object type of JobInfo.(string, required)
     - Usually same as query's object.(If **querySelectFrom** is `(snip) FROM xxx (snip)` then **dataType** is `xxx`)
 - **pollingIntervalMillisecond**: polling interval millisecond.(string, default is 30000)
-- **querySelectFrom**: part of query. SELECT and FROM.(string, required)
+- **querySelectFrom**: part of query. SELECT and FROM. default is all fields.(string)
 - **queryWhere**: part of query. WHERE.(string, default is "")
 - **queryOrder**: part of query. ORDER BY.(string, default is "")
-- **columns**: schema config.(SchemaConfig, required)
+- **columns**: schema config. (SchemaConfig)
 - **startRowMarkerName**: 開始レコードを特定するための目印とするカラム名を指定する.(String, default is null)
 - **start_row_marker**: 抽出条件に、『カラム「startRowMarkerName」がこの値よりも大きい』を追加する.(string, default is null)
 - **queryAll**: if true, uses the queryAll operation so that deleted records are returned.(boolean, default is false)
@@ -57,6 +57,18 @@ in:
   - {type: string, name: Id}
   - {type: string, name: Name}
   - {type: timestamp, name: LastModifiedDate, format: '%FT%T.%L%Z'}
+```
+
+### SObjectの伊fールドをすべて抽出
+
+```yaml
+in:
+  type: salesforce_bulk
+  userName: USER_NAME
+  password: PASSWORD
+  authEndpointUrl: https://login.salesforce.com/services/Soap/u/39.0
+  objectType: Account
+  pollingIntervalMillisecond: 5000
 ```
 
 ### 前回取得時点から変更があったオブジェクトのみ取得

@@ -23,6 +23,9 @@ import com.sforce.async.JobStateEnum;
 import com.sforce.async.OperationEnum;
 import com.sforce.async.QueryResultList;
 
+import com.sforce.soap.partner.DescribeSObjectResult;
+import com.sforce.soap.partner.fault.UnexpectedErrorFault;
+import com.sforce.soap.partner.Field;
 import com.sforce.soap.partner.PartnerConnection;
 
 import com.sforce.ws.ConnectionException;
@@ -100,6 +103,43 @@ public class SalesforceBulkWrapper implements AutoCloseable {
         this.queryAll = queryAll;
     }
 
+    public List<Map<String, String>> getFields(String objectType)
+            throws ConnectionException, InterruptedException, AsyncApiException, IOException {
+
+        DescribeSObjectResult describeSObjectResult = partnerConnection.describeSObject(objectType);
+        Field[] fields = describeSObjectResult.getFields();
+        List<Map<String, String>> queryResultList = new ArrayList<>();
+        for (int i = 0; i < fields.length; i++) {
+            Field field = fields[i];
+            HashMap<String, String> rowMap = new HashMap<>();
+            switch(field.getType()) {
+                case address:
+                    continue; // compound data not supported in Bulk Query
+                case _double:
+                case currency:
+                case percent:
+                    rowMap.put("type", "double");
+                    break;
+                case _int:
+                    rowMap.put("type", "long");
+                    break;
+                case datetime:
+                    rowMap.put("type", "timestamp");
+                    rowMap.put("format", "%FT%T.%L%Z");
+                    break;
+                case date:
+                    rowMap.put("type", "timestamp");
+                    rowMap.put("format", "%F");
+                    break;
+                default:
+                    rowMap.put("type", "string");
+            }
+            rowMap.put("name", field.getName());
+            queryResultList.add(rowMap);
+        }
+        return queryResultList;
+    }
+
     public List<Map<String, String>> syncQuery(String objectType, String query)
             throws InterruptedException, AsyncApiException, IOException {
 
@@ -173,7 +213,11 @@ public class SalesforceBulkWrapper implements AutoCloseable {
     }
 
     public void close() throws ConnectionException {
-        partnerConnection.logout();
+        try {
+            partnerConnection.logout();
+        }catch (UnexpectedErrorFault e1) {
+            System.err.println("Fault: " + e1.getExceptionMessage());
+        }
     }
 
     private PartnerConnection createPartnerConnection(

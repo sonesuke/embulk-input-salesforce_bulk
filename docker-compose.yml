@@ -1,0 +1,7 @@
+version: '3'
+services:
+  develop:
+    image: gradle
+    volumes:
+      - ./:/embulk-input-salesforce_bulk
+    working_dir: /embulk-input-salesforce_bulk

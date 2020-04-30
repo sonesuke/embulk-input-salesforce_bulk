@@ -13,10 +13,12 @@ configurations {
     provided
 }
 
-version = "0.2.2"
+version = "0.2.3"
 [compileJava, compileTestJava]*.options*.encoding = "UTF-8"
 
 dependencies {
+    compile 'com.google.guava:guava:18.0+'
+    compile 'org.slf4j:slf4j-log4j12:1.7.21+'
     compile 'com.force.api:force-wsc:39.+'
     compile 'com.force.api:force-partner-api:39.+'
     compile  "org.embulk:embulk-core:0.8.14"
@@ -53,9 +55,11 @@ task gemPush(type: JRubyExec, dependsOn: ["gem"]) {
     scriptArgs "push", "pkg/${project.name}-${project.version}.gem"
 }
 
-task "package"(dependsOn: ["gemspec", "classpath"]) << {
-    println "> Build succeeded."
-    println "> You can run embulk with '-L ${file(".").absolutePath}' argument."
+task "package"(dependsOn: ["gemspec", "classpath"]) {
+    doLast {
+        println "> Build succeeded."
+        println "> You can run embulk with '-L ${file(".").absolutePath}' argument."
+    }
 }
 
 task gemspec {

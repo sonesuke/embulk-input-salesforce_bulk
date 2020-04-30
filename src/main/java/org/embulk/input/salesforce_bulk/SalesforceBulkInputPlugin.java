@@ -8,10 +8,12 @@ import java.io.IOException;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.TemporalField;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
+import java.util.StringJoiner;
 
 import org.embulk.config.TaskReport;
 import org.embulk.config.Config;
@@ -34,6 +36,8 @@ import org.embulk.spi.SchemaConfig;
 import org.embulk.spi.time.Timestamp;
 import org.embulk.spi.time.TimestampParseException;
 import org.embulk.spi.time.TimestampParser;
+import org.embulk.spi.type.Type;
+import org.embulk.spi.type.Types;
 import org.embulk.spi.util.Timestamps;
 import org.slf4j.Logger;
 
@@ -64,7 +68,8 @@ public class SalesforceBulkInputPlugin
 
         // SOQL クエリ文字列 SELECT, FROM
         @Config("querySelectFrom")
-        public String getQuerySelectFrom();
+        @ConfigDefault("null")
+        public Optional<String> getQuerySelectFrom();
 
         // SOQL クエリ文字列 WHERE
         @Config("queryWhere")
@@ -88,7 +93,8 @@ public class SalesforceBulkInputPlugin
 
         // スキーマ情報
         @Config("columns")
-        public SchemaConfig getColumns();
+        @ConfigDefault("null")
+        public Optional<SchemaConfig> getColumns();
 
         // next config のための最終レコード判定用カラム名
         @Config("startRowMarkerName")
@@ -111,13 +117,74 @@ public class SalesforceBulkInputPlugin
 
     private Logger log = Exec.getLogger(SalesforceBulkInputPlugin.class);
 
+    private SchemaConfig makeSchemaConfig(SalesforceBulkWrapper sfbw, String objectType)
+            throws ConnectionException, InterruptedException, AsyncApiException, IOException {
+        List<Map<String, String>> fields = sfbw.getFields(objectType);
+        List<ColumnConfig> columnConfigs = new ArrayList<>();
+        for (Map<String, String> field : fields) {
+            Type type = getType(field);
+            ConfigSource configSorce = getConfigSource(field);
+            columnConfigs.add(new ColumnConfig(
+                    field.get("name"),
+                    type,
+                    configSorce
+            ));
+        }
+        return new SchemaConfig(columnConfigs);
+    }
+
+    private ConfigSource getConfigSource(Map<String, String> field) {
+        ConfigSource configSorce = Exec.newConfigSource();
+        if(field.containsKey("format")) {
+            configSorce.set("format", field.get("format"));
+        }
+        return configSorce;
+    }
+
+    private Type getType(Map<String, String> field) {
+        Type type;
+        switch(field.get("type")) {
+            case "string":
+                type = Types.STRING;
+                break;
+            case "double":
+                type = Types.DOUBLE;
+                break;
+            case "long":
+                type = Types.LONG;
+                break;
+            case "timestamp":
+                type = Types.TIMESTAMP;
+                break;
+            default:
+                type = Types.STRING;
+        }
+        return type;
+    }
+
     @Override
     public ConfigDiff transaction(ConfigSource config,
             InputPlugin.Control control)
     {
         PluginTask task = config.loadConfig(PluginTask.class);
 
-        Schema schema = task.getColumns().toSchema();
+        SchemaConfig schemaConfig = task.getColumns().orNull();
+        if (schemaConfig == null) {
+            try {
+                log.info("Query Fields : '{}'", task.getObjectType());
+                SalesforceBulkWrapper sfbw = new SalesforceBulkWrapper(
+                        task.getUserName(),
+                        task.getPassword(),
+                        task.getAuthEndpointUrl(),
+                        task.getCompression(),
+                        task.getPollingIntervalMillisecond(),
+                        task.getQueryAll());
+                schemaConfig = makeSchemaConfig(sfbw, task.getObjectType());
+            } catch (ConnectionException | AsyncApiException | InterruptedException | IOException e) {
+                log.error("{}", e.getClass(), e);
+            }
+        }
+        Schema schema = schemaConfig.toSchema();
         int taskCount = 1;  // number of run() method calls
 
         ConfigDiff returnConfigDiff = resume(task.dump(), schema, taskCount, control);
@@ -177,14 +244,24 @@ public class SalesforceBulkInputPlugin
             log.info("Login success.");
 
             // クエリの作成
-            String querySelectFrom = task.getQuerySelectFrom();
+            String querySelectFrom = task.getQuerySelectFrom().orNull();
             String queryWhere = task.getQueryWhere().or("");
             String queryOrder = task.getQueryOrder().or("");
             String column = task.getStartRowMarkerName().orNull();
             String value = task.getStartRowMarker().orNull();
 
             String query;
-            query = querySelectFrom;
+            if (querySelectFrom != null) {
+                query = querySelectFrom;
+            } else {
+                log.info("Query Fields : '{}'", task.getObjectType());
+                List<Map<String, String>> fields = sfbw.getFields(task.getObjectType());
+                StringJoiner sj = new StringJoiner(",");
+                for (Map<String, String> field: fields) {
+                    sj.add(field.get("name"));
+                }
+                query = "SELECT " + sj.toString() + " FROM " + task.getObjectType();
+            }
 
             if (!queryWhere.isEmpty()) {
                 queryWhere = " WHERE " + queryWhere;
@@ -211,9 +288,14 @@ public class SalesforceBulkInputPlugin
             List<Map<String, String>> queryResults = sfbw.syncQuery(
                     task.getObjectType(), query);
 
+            SchemaConfig schemaConfig = task.getColumns().orNull();
+            if (schemaConfig == null) {
+                schemaConfig = makeSchemaConfig(sfbw, task.getObjectType());
+            }
+
             for (Map<String, String> row : queryResults) {
                 // Visitor 作成
-                ColumnVisitor visitor = new ColumnVisitorImpl(row, task, pageBuilder);
+                ColumnVisitor visitor = new ColumnVisitorImpl(row, task, pageBuilder, schemaConfig);
 
                 // スキーマ解析
                 schema.visitColumns(visitor);
@@ -253,12 +335,12 @@ public class SalesforceBulkInputPlugin
         private final TimestampParser[] timestampParsers;
         private final PageBuilder pageBuilder;
 
-        ColumnVisitorImpl(Map<String, String> row, PluginTask task, PageBuilder pageBuilder) {
+        ColumnVisitorImpl(Map<String, String> row, PluginTask task, PageBuilder pageBuilder, SchemaConfig schemaConfig) {
             this.row = row;
             this.pageBuilder = pageBuilder;
 
             this.timestampParsers = Timestamps.newTimestampColumnParsers(
-                    task, task.getColumns());
+                    task, schemaConfig);
         }
 
         @Override

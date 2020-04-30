@@ -36,4 +36,27 @@ public class TestSalesforceBulkWrapper {
         sfbw.close();
         System.out.println(queryResults);
     }
+
+    @Test
+    public void testgetFields() throws Exception {
+        // ユーザー情報をプロパティファイルから取得
+        Properties p = new Properties();
+        InputStream is = TestSalesforceBulkWrapper.class.
+                getResourceAsStream("/user_info.properties");
+        p.load(is);
+
+        String userName = p.getProperty("username", "");
+        String password = p.getProperty("password", "");
+
+        if (userName.equals("") || password.equals("")) {
+            System.exit(1);
+        }
+
+        SalesforceBulkWrapper sfbw = new SalesforceBulkWrapper(
+                userName, password);
+        List<Map<String, String>> queryResults = sfbw.getFields(
+                "Account");
+        sfbw.close();
+        System.out.println(queryResults);
+    }
 }
